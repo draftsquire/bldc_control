@@ -25,9 +25,11 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include "encoder.h"
+
+
+
 #include "pwm.h"
-#include "speed_control.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -49,8 +51,6 @@ TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 
 UART_HandleTypeDef huart2;
-DMA_HandleTypeDef hdma_usart2_rx;
-DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
 char usart_buffer[255] = {'\0'};
@@ -62,9 +62,8 @@ uint32_t speed_coeff = 0;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_DMA_Init(void);
-static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_TIM1_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
@@ -72,44 +71,47 @@ static void MX_USART2_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void TIM1_IRQHandler(void){
-//    if(TIM1->SR & TIM_SR_TIF){
-//        /* LED */
-//        //GPIOA->ODR ^= GPIO_ODR_4;
-//        uint32_t val = TIM1->CNT;
-//        if (val < 1000){
-//            TIM1->CNT = 1000;
-//        }else if(val > 2000){
-//            TIM1->CNT = 2000;
-//        }
-//        val = TIM1->CNT;
-//        sprintf(usart_buffer, "Counter: %lu\n\r", val);
-//        HAL_UART_Transmit(&huart2, (uint8_t*)usart_buffer, 8*sizeof(uint8_t), 1000);
-//        pwm_change_duty(TIM2, val);
-////		snprintf(usart_buffer, 63, "Angle: %f\n", getLinearDistance(TIM3, ENCODER_RESOLUTION, 1, 1));
-////		HAL_UART_Transmit(&huart2, (uint8_t*)usart_buffer, strlen(usart_buffer), 1000);
-//
-//        /*SEND DATA*/
-//        /* Interrupt enabled */
-//        TIM1->SR &= ~TIM_SR_TIF;
-//    }
-}
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
-    if(huart == &huart2)
+    if(htim->Instance == TIM1)
     {
-        speed_coeff = atol((char*)recieve_buffer);
-        if(speed_coeff > 100){
-            sprintf((char *) transmit_buffer, "Duty cycle must be between 0 and 100!\r\n", speed_coeff);
+        int32_t count = 10 * __HAL_TIM_GET_COUNTER(htim);
+        int32_t speed = count - 500;
+        uint8_t direct = __HAL_TIM_IS_TIM_COUNTING_DOWN(htim);
+        if (speed == 0){
+            __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+        }else if(speed < 0){
+            __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, (-speed + 500) - 1); // длина импульса
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
         }else{
-            sprintf((char *) transmit_buffer, "Duty cycle = %lu\n\r", speed_coeff);
-            pwm_change_duty(TIM2, speed_coeff);
-            HAL_UART_Transmit_DMA(&huart2, (uint8_t *) transmit_buffer, sizeof(transmit_buffer));
+            __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, (speed + 500) - 1);
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
         }
-        HAL_UART_Receive_DMA(&huart2, (uint8_t *) recieve_buffer, 3);
+
+        snprintf(transmit_buffer, 63, "Encoder %ld %s\n\r", speed, direct ? "DOWN" : "UP");
+        HAL_UART_Transmit(&huart2, (uint8_t*)transmit_buffer, strlen(transmit_buffer), 1000);
     }
 }
+
+//void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+//{
+//    if(huart == &huart2)
+//    {
+//        speed_coeff = atol((char*)recieve_buffer);
+//        if(speed_coeff > 100){
+//            sprintf((char *) transmit_buffer, "Duty cycle must be between 0 and 100!\r\n", speed_coeff);
+//            char txt_buf[] = "Duty cycle must be between 0 and 100!";
+//        }else{
+//            sprintf((char *) transmit_buffer, "Duty cycle = %lu\n\r", speed_coeff);
+//            pwm_change_duty(TIM2, speed_coeff);
+//            char txt_buf[255] ={'\0'};
+//            sprintf((char *) txt_buf, "Duty cycle = %lu", speed_coeff);;
+//            HAL_UART_Transmit_DMA(&huart2, (uint8_t *) transmit_buffer, sizeof(transmit_buffer));
+//        }
+//        HAL_UART_Receive_DMA(&huart2, (uint8_t *) recieve_buffer, 3);
+//    }
+//}
 /* USER CODE END 0 */
 
 /**
@@ -143,19 +145,20 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_DMA_Init();
-  MX_TIM1_Init();
   MX_TIM2_Init();
+  MX_TIM1_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   HAL_TIM_PWM_Start_IT(&htim2, TIM_CHANNEL_1);
-  HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
-  HAL_UART_Receive_DMA(&huart2, (uint8_t *) recieve_buffer, 3);
+  HAL_TIM_Encoder_Start_IT(&htim1, TIM_CHANNEL_1);
+  __HAL_TIM_SET_COUNTER(&htim1, 50);
+//  HAL_UART_Receive_DMA(&huart2, (uint8_t *) recieve_buffer, 3);
 
   while (1)
   {
@@ -228,7 +231,7 @@ static void MX_TIM1_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 65535;
+  htim1.Init.Period = 100;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -276,7 +279,7 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 19;
+  htim2.Init.Prescaler = 15;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim2.Init.Period = 999;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -340,34 +343,26 @@ static void MX_USART2_UART_Init(void)
 }
 
 /**
-  * Enable DMA controller clock
-  */
-static void MX_DMA_Init(void)
-{
-
-  /* DMA controller clock enable */
-  __HAL_RCC_DMA1_CLK_ENABLE();
-
-  /* DMA interrupt init */
-  /* DMA1_Stream5_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
-  /* DMA1_Stream6_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
-
-}
-
-/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
   */
 static void MX_GPIO_Init(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOA_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(MOTOR_DIR_GPIO_Port, MOTOR_DIR_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : MOTOR_DIR_Pin */
+  GPIO_InitStruct.Pin = MOTOR_DIR_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(MOTOR_DIR_GPIO_Port, &GPIO_InitStruct);
 
 }
 
