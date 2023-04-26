@@ -27,8 +27,8 @@
 
 
 
-
-#include "pwm.h"
+#include <encoder.h>
+#include <pwm.h>
 
 /* USER CODE END Includes */
 
@@ -40,6 +40,14 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define PWM_F 10000
+
+/// \def BLDC_CONTROL_INTERNAL_CLK_FREQ
+/// \brief Частота тактирования контроллера, Гц
+#define BLDC_CONTROL_INTERNAL_CLK_FREQ 16000000
+
+/// \def BLDC_CONTROL_ENCODER_RES
+/// \brief Разрешение измерительного энкодера, имп./об.
+#define BLDC_CONTROL_ENCODER_RES 64.0
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -52,6 +60,7 @@ TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim5;
+TIM_HandleTypeDef htim9;
 
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_tx;
@@ -61,9 +70,12 @@ char usart_buffer[255] = {'\0'};
 uint8_t recieve_buffer[255] = {'\0'};
 uint8_t transmit_buffer[255] = {'\0'};
 uint32_t speed_coeff = 0;
-int32_t optical_count = 0;
+uint16_t optical_count = 0;
 int32_t mechanical_count = 0;
 int32_t speed = 0;
+uint16_t prev_pos_ticks = 0;
+double speed_rpm = 0.;
+uint16_t sampling_frequency;
 uint8_t direct;
 /* USER CODE END PV */
 
@@ -77,6 +89,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_TIM5_Init(void);
+static void MX_TIM9_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -101,14 +114,26 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
             HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
         }
 
-
-
+    }
+    ///Таймер на рассчёт скорости, 20 Гц
+    if (htim->Instance == TIM9) {
         /// Считывание показаний оптического энкодера
         /// \warning Засунуть в отдельную функцию!
-        optical_count = __HAL_TIM_GET_COUNTER(&htim3);
+        optical_count = __HAL_TIM_GET_COUNTER(&htim3); /// 0...65535
+//        speed_rpm = get_speed_rpm(TIM3, prev_pos_ticks, BLDC_CONTROL_ENCODER_RES,
+//                                  sampling_frequency);
+        /// Рассчитываем разницу между соседними измерениями тиков энкодера
+        int32_t ticks_div = (int32_t) optical_count -  (int32_t) prev_pos_ticks;
+        int32_t speed_ticks =  ticks_div *  sampling_frequency; /// Скорость, тиков / секунду
+
+        speed_rpm = ((double) speed_ticks /  BLDC_CONTROL_ENCODER_RES) * 60.; ///Скорость, об/мин
+        prev_pos_ticks = optical_count;
     }
     if (htim->Instance == TIM5) {
-        snprintf(transmit_buffer, 63, "Encoder input: %ld %s\n Optical encoder: %ld\n\r", speed, direct ? "DOWN" : "UP", optical_count);
+//        snprintf(transmit_buffer, 63, "Encoder input: %ld %s\n Optical encoder: %ld\n Speed: %.2f rpm\n\r",
+//                 speed, direct ? "DOWN" : "UP", optical_count, speed_rpm);
+
+        snprintf(transmit_buffer, sizeof(transmit_buffer), "Optical encoder: %ld\n Speed: %f rpm\n\r", optical_count, speed_rpm);
         HAL_UART_Transmit_DMA(&huart2, (uint8_t *) transmit_buffer, strlen(transmit_buffer));
 //        snprintf(transmit_buffer, 63, "Optical encoder: %ld %s\n\r", optical_count,
 //                 __HAL_TIM_IS_TIM_COUNTING_DOWN(&htim3) ? "DOWN" : "UP");
@@ -135,8 +160,6 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-//  uint32_t val = TIM1->CNT;
-    uint32_t val = 0;
 
 
   /* USER CODE END Init */
@@ -157,6 +180,7 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM4_Init();
   MX_TIM5_Init();
+  MX_TIM9_Init();
   /* USER CODE BEGIN 2 */
 
 
@@ -169,7 +193,9 @@ int main(void)
   HAL_TIM_Encoder_Start_IT(&htim3, TIM_CHANNEL_1);
   HAL_TIM_Base_Start_IT(&htim4);
   HAL_TIM_Base_Start_IT(&htim5);
+    HAL_TIM_Base_Start_IT(&htim9);
   __HAL_TIM_SET_COUNTER(&htim1, 50);
+  sampling_frequency = BLDC_CONTROL_INTERNAL_CLK_FREQ / (TIM9->PSC + 1) / (TIM9->ARR + 1);
 //  HAL_UART_Receive_DMA(&huart2, (uint8_t *) recieve_buffer, 3);
 
   while (1)
@@ -458,6 +484,44 @@ static void MX_TIM5_Init(void)
   /* USER CODE BEGIN TIM5_Init 2 */
 
   /* USER CODE END TIM5_Init 2 */
+
+}
+
+/**
+  * @brief TIM9 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM9_Init(void)
+{
+
+  /* USER CODE BEGIN TIM9_Init 0 */
+
+  /* USER CODE END TIM9_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+
+  /* USER CODE BEGIN TIM9_Init 1 */
+
+  /* USER CODE END TIM9_Init 1 */
+  htim9.Instance = TIM9;
+  htim9.Init.Prescaler = 15999;
+  htim9.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim9.Init.Period = 99;
+  htim9.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim9.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim9) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim9, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM9_Init 2 */
+
+  /* USER CODE END TIM9_Init 2 */
 
 }
 
