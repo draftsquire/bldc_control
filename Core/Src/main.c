@@ -144,13 +144,14 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
         __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
         /// "Сброс" счётчика механического энкодера
         __HAL_TIM_SET_COUNTER(&htim1, 50);
+        /// Сброс счётчика оптического энкодера
+        __HAL_TIM_SET_COUNTER(&htim3, 0);
     /// Сработал концевой датчик A (Ближе к движку)
     } else if (GPIO_Pin == TS_A_IN_Pin) {/// Сработал концевой датчик A (дальше от движка)
         /// Сброс счётчика оптического энкодера
         __HAL_TIM_SET_COUNTER(&htim3, 0);
     }
 }
-
 
 
 /* USER CODE END 0 */
