@@ -29,7 +29,7 @@
 
 #include <encoder.h>
 #include <pwm.h>
-
+#include <state_machine.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -77,6 +77,7 @@ uint16_t prev_pos_ticks = 0;
 double speed_rpm = 0.;
 uint16_t sampling_frequency;
 uint8_t direct;
+states state;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -124,14 +125,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
         prev_pos_ticks = __HAL_TIM_GET_COUNTER(&htim3);
     }
     if (htim->Instance == TIM5) {
-//        snprintf(transmit_buffer, 63, "Encoder input: %ld %s\n Optical encoder: %ld\n Speed: %.2f rpm\n\r",
-//                 speed, direct ? "DOWN" : "UP", optical_count, speed_rpm);
-
         snprintf(transmit_buffer, sizeof(transmit_buffer), "Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
         HAL_UART_Transmit_DMA(&huart2, (uint8_t *) transmit_buffer, strlen(transmit_buffer));
-//        snprintf(transmit_buffer, 63, "Optical encoder: %ld %s\n\r", optical_count,
-//                 __HAL_TIM_IS_TIM_COUNTING_DOWN(&htim3) ? "DOWN" : "UP");
-//        HAL_UART_Transmit_DMA(&huart2, (uint8_t *) transmit_buffer, strlen(transmit_buffer));
+
     }
 }
 
@@ -144,12 +140,17 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
         __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
         /// "Сброс" счётчика механического энкодера
         __HAL_TIM_SET_COUNTER(&htim1, 50);
-        /// Сброс счётчика оптического энкодера
-        __HAL_TIM_SET_COUNTER(&htim3, 0);
+
     /// Сработал концевой датчик A (Ближе к движку)
-    } else if (GPIO_Pin == TS_A_IN_Pin) {/// Сработал концевой датчик A (дальше от движка)
-        /// Сброс счётчика оптического энкодера
-        __HAL_TIM_SET_COUNTER(&htim3, 0);
+    } else if (GPIO_Pin == TS_A_IN_Pin) {
+        /// Тормоз двигателя
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+        /// "Сброс" счётчика механического энкодера
+        __HAL_TIM_SET_COUNTER(&htim1, 50);
+        for(int i = 0;i < 1000; i++){
+            /// Сброс счётчика оптического энкодера
+            __HAL_TIM_SET_COUNTER(&htim3, 0);
+        }
     }
 }
 
@@ -609,17 +610,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(MOTOR_DIR_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : TS_A_IN_Pin */
-  GPIO_InitStruct.Pin = TS_A_IN_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(TS_A_IN_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : TS_B_IN_Pin */
-  GPIO_InitStruct.Pin = TS_B_IN_Pin;
+  /*Configure GPIO pins : TS_A_IN_Pin TS_B_IN_Pin */
+  GPIO_InitStruct.Pin = TS_A_IN_Pin|TS_B_IN_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(TS_B_IN_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
