@@ -47,7 +47,7 @@
 
 /// \def BLDC_CONTROL_ENCODER_RES
 /// \brief Разрешение измерительного энкодера, имп./об.
-#define BLDC_CONTROL_ENCODER_RES 64.0
+#define BLDC_CONTROL_ENCODER_RES 64
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -119,27 +119,38 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
     if (htim->Instance == TIM9) {
         /// Считывание показаний оптического энкодера
         /// \warning Засунуть в отдельную функцию!
-        optical_count = __HAL_TIM_GET_COUNTER(&htim3); /// 0...65535
-//        speed_rpm = get_speed_rpm(TIM3, prev_pos_ticks, BLDC_CONTROL_ENCODER_RES,
-//                                  sampling_frequency);
-        /// Рассчитываем разницу между соседними измерениями тиков энкодера
-        int32_t ticks_div = (int32_t) optical_count -  (int32_t) prev_pos_ticks;
-        int32_t speed_ticks =  ticks_div *  sampling_frequency; /// Скорость, тиков / секунду
-
-        speed_rpm = ((double) speed_ticks /  BLDC_CONTROL_ENCODER_RES) * 60.; ///Скорость, об/мин
-        prev_pos_ticks = optical_count;
+        
+        speed_rpm = get_speed_rpm(&htim3, prev_pos_ticks, BLDC_CONTROL_ENCODER_RES, sampling_frequency);
+        prev_pos_ticks = __HAL_TIM_GET_COUNTER(&htim3);
     }
     if (htim->Instance == TIM5) {
 //        snprintf(transmit_buffer, 63, "Encoder input: %ld %s\n Optical encoder: %ld\n Speed: %.2f rpm\n\r",
 //                 speed, direct ? "DOWN" : "UP", optical_count, speed_rpm);
 
-        snprintf(transmit_buffer, sizeof(transmit_buffer), "Optical encoder: %ld\n Speed: %f rpm\n\r", optical_count, speed_rpm);
+        snprintf(transmit_buffer, sizeof(transmit_buffer), "Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
         HAL_UART_Transmit_DMA(&huart2, (uint8_t *) transmit_buffer, strlen(transmit_buffer));
 //        snprintf(transmit_buffer, 63, "Optical encoder: %ld %s\n\r", optical_count,
 //                 __HAL_TIM_IS_TIM_COUNTING_DOWN(&htim3) ? "DOWN" : "UP");
 //        HAL_UART_Transmit_DMA(&huart2, (uint8_t *) transmit_buffer, strlen(transmit_buffer));
     }
 }
+
+/// \brief Callback для внешних прерываний с концевых датчиков
+/// \note Прерывания на ножке PC9 генерируются по спадающему фронту
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
+    /// Сработал концевой датчик B (дальше от движка)
+    if (GPIO_Pin == TS_B_IN_Pin) {
+        /// Тормоз двигателя
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+        /// "Сброс" счётчика механического энкодера
+        __HAL_TIM_SET_COUNTER(&htim1, 50);
+    /// Сработал концевой датчик A (Ближе к движку)
+    } else if (GPIO_Pin == TS_A_IN_Pin) {/// Сработал концевой датчик A (дальше от движка)
+        /// Сброс счётчика оптического энкодера
+        __HAL_TIM_SET_COUNTER(&htim3, 0);
+    }
+}
+
 
 
 /* USER CODE END 0 */
@@ -193,7 +204,7 @@ int main(void)
   HAL_TIM_Encoder_Start_IT(&htim3, TIM_CHANNEL_1);
   HAL_TIM_Base_Start_IT(&htim4);
   HAL_TIM_Base_Start_IT(&htim5);
-    HAL_TIM_Base_Start_IT(&htim9);
+  HAL_TIM_Base_Start_IT(&htim9);
   __HAL_TIM_SET_COUNTER(&htim1, 50);
   sampling_frequency = BLDC_CONTROL_INTERNAL_CLK_FREQ / (TIM9->PSC + 1) / (TIM9->ARR + 1);
 //  HAL_UART_Receive_DMA(&huart2, (uint8_t *) recieve_buffer, 3);
@@ -507,7 +518,7 @@ static void MX_TIM9_Init(void)
   htim9.Instance = TIM9;
   htim9.Init.Prescaler = 15999;
   htim9.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim9.Init.Period = 99;
+  htim9.Init.Period = 49;
   htim9.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim9.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim9) != HAL_OK)
@@ -585,6 +596,7 @@ static void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(MOTOR_DIR_GPIO_Port, MOTOR_DIR_Pin, GPIO_PIN_RESET);
@@ -595,6 +607,22 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(MOTOR_DIR_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : TS_A_IN_Pin */
+  GPIO_InitStruct.Pin = TS_A_IN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(TS_A_IN_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : TS_B_IN_Pin */
+  GPIO_InitStruct.Pin = TS_B_IN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(TS_B_IN_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
 }
 

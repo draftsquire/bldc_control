@@ -9,7 +9,7 @@
 /// \param[in] encoder_resolution - Разрешение энкодера, имп./об.
 /// \param[in] samp_freq - Частота опроса энкодера
 /// \return скорость вращения, rpm
-double get_speed_rpm(TIM_TypeDef *encoder_TIM, uint32_t prev_ticks, uint16_t encoder_resolution, uint32_t samp_freq);
+double get_speed_rpm(TIM_HandleTypeDef *encoder_TIM, uint16_t prev_ticks, uint16_t encoder_resolution, uint16_t samp_freq);
 
 uint32_t get_encoder_value(TIM_TypeDef* encoder_TIM);
 #endif /* INC_ENCODER_H_ */
