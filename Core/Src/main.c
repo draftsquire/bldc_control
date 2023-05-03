@@ -41,6 +41,16 @@
 /* USER CODE BEGIN PD */
 #define PWM_F 10000
 
+/// \def BLDC_CONTROL_SET_DIR_FWD
+/// \brief Макрос для установки направления движения двигателя вперёд (в направлении ОТ двигателя по рельсе).
+/// \warning Использовать с осторожностью, т.к. подключение пина, отвечающего за направление вращения двигателя, может измениться
+#define BLDC_CONTROL_SET_DIR_FWD() HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET)
+
+/// \def BLDC_CONTROL_SET_DIR_BWD
+/// \brief Макрос для установки направления движения двигателя назад (в направлении К двигателю по рельсе).
+/// \warning Использовать с осторожностью, т.к. подключение пина, отвечающего за направление вращения двигателя, может измениться
+#define BLDC_CONTROL_SET_DIR_BWD() HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET)
+
 /// \def BLDC_CONTROL_INTERNAL_CLK_FREQ
 /// \brief Частота тактирования контроллера, Гц
 #define BLDC_CONTROL_INTERNAL_CLK_FREQ 16000000
@@ -68,7 +78,7 @@ DMA_HandleTypeDef hdma_usart2_tx;
 /* USER CODE BEGIN PV */
 char usart_buffer[255] = {'\0'};
 uint8_t recieve_buffer[255] = {'\0'};
-uint8_t transmit_buffer[255] = {'\0'};
+char transmit_buffer[255] = {'\0'};
 uint32_t speed_coeff = 0;
 uint16_t optical_count = 0;
 int32_t mechanical_count = 0;
@@ -99,7 +109,7 @@ static void MX_TIM9_Init(void);
 /* USER CODE BEGIN 0 */
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
-    if (htim->Instance == TIM4) {
+    if ((htim->Instance == TIM4) && (state == bldc_control_before_calibration)) {
         /// Считывание показаний механического энкодера
         /// \warning Засунуть в отдельную функцию!
         mechanical_count = 10 * __HAL_TIM_GET_COUNTER(&htim1);
@@ -125,7 +135,30 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
         prev_pos_ticks = __HAL_TIM_GET_COUNTER(&htim3);
     }
     if (htim->Instance == TIM5) {
-        snprintf(transmit_buffer, sizeof(transmit_buffer), "Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+        switch (state){
+            case bldc_control_before_calibration:
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "before_calibration. PWM: %lu , Optical encoder: %ld\n Speed: %f rpm\n\r",TIM2->CCR1, __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+                break;
+            case bldc_control_calibrating_zero:
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrating_zero. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+                break;
+            case bldc_control_calibrated_zero:
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrated_zero. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+                break;
+            case bldc_control_calibrating_end:
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrating_end. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+                break;
+            case bldc_control_calibrated_end:
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrated_end. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+                break;
+            case bldc_control_calibrated:
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "Calibrated!!!. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+                break;
+            default:
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+                break;
+        }
+
         HAL_UART_Transmit_DMA(&huart2, (uint8_t *) transmit_buffer, strlen(transmit_buffer));
 
     }
@@ -136,21 +169,27 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
     /// Сработал концевой датчик B (дальше от движка)
     if (GPIO_Pin == TS_B_IN_Pin) {
-        /// Тормоз двигателя
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
         /// "Сброс" счётчика механического энкодера
         __HAL_TIM_SET_COUNTER(&htim1, 50);
+        /// Тормоз двигателя
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+
+        if (state == bldc_control_calibrating_end){
+            state = bldc_control_calibrated_end;
+        }
 
     /// Сработал концевой датчик A (Ближе к движку)
     } else if (GPIO_Pin == TS_A_IN_Pin) {
-        /// Тормоз двигателя
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
         /// "Сброс" счётчика механического энкодера
         __HAL_TIM_SET_COUNTER(&htim1, 50);
-        for(int i = 0;i < 1000; i++){
-            /// Сброс счётчика оптического энкодера
-            __HAL_TIM_SET_COUNTER(&htim3, 0);
+        /// Тормоз двигателя
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+        __HAL_TIM_SET_COUNTER(&htim3, 0);
+        if(state == bldc_control_calibrating_zero){
+
+            state = bldc_control_calibrated_zero;
         }
+
     }
 }
 
@@ -210,11 +249,53 @@ int main(void)
   __HAL_TIM_SET_COUNTER(&htim1, 50);
   sampling_frequency = BLDC_CONTROL_INTERNAL_CLK_FREQ / (TIM9->PSC + 1) / (TIM9->ARR + 1);
 //  HAL_UART_Receive_DMA(&huart2, (uint8_t *) recieve_buffer, 3);
+  /// < Устанавливаем начальное состояние системы
+  state = bldc_control_before_calibration;
+  /// < Устанавливаем начальное состояние системы
+  /// \warning АКТИВИРОВАТЬ ПО НАЖАТИЮ КНОПКИ!
+  state = bldc_control_calibrating_zero;
 
-  while (1)
-  {
+  while (1){
+      switch (state) {
+          case bldc_control_calibrating_zero :
+              __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 501); /// ~ минимальная скорость
+              BLDC_CONTROL_SET_DIR_BWD();
+              break;
+          case bldc_control_calibrated_zero:
+              /// Ожидание окончание вращения энкодера по инерции после столкновения с датчиком
+              __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+              HAL_Delay(5000);
+              /// Обнуление счётчика оптического энкодера
+              __HAL_TIM_SET_COUNTER(&htim3, 0);
+              state = bldc_control_calibrating_end;
+              break;
+          case bldc_control_calibrating_end:
+              if ( (__HAL_TIM_GET_COUNTER(&htim3) < 1200) && (__HAL_TIM_GET_COUNTER(&htim3) >= 0) ){
+                  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 999); /// максисальная скорость
+                  BLDC_CONTROL_SET_DIR_FWD();
+              } else{
+                  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 501); /// минимальная скорость, приближаемся к датчику
+                  BLDC_CONTROL_SET_DIR_FWD();
+              }
+              break;
+          case bldc_control_calibrated_end:
+
+              if ( (__HAL_TIM_GET_COUNTER(&htim3) >= 1000) || (__HAL_TIM_GET_COUNTER(&htim3) <= 500)){
+                  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 999); /// ~ максисальная скорость
+                  BLDC_CONTROL_SET_DIR_BWD();
+              }else { /// Отъехали от края на безопасное расстояние, можно останавливаться и готовиться к работе
+                  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+                  state = bldc_control_calibrated;
+                  /// \warning Временно передаём ручное управление
+                  state = bldc_control_before_calibration;
+              }
+              break;
+          default:
+              break;
+
+
+      }
     /* USER CODE END WHILE */
-
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
