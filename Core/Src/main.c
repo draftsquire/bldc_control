@@ -258,30 +258,30 @@ int main(void)
   while (1){
       switch (state) {
           case bldc_control_calibrating_zero :
-              __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 501); /// ~ минимальная скорость
+              __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 600); /// ~ минимальная скорость
               BLDC_CONTROL_SET_DIR_BWD();
               break;
           case bldc_control_calibrated_zero:
               /// Ожидание окончание вращения энкодера по инерции после столкновения с датчиком
               __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
-              HAL_Delay(5000);
+              HAL_Delay(1500);
               /// Обнуление счётчика оптического энкодера
               __HAL_TIM_SET_COUNTER(&htim3, 0);
               state = bldc_control_calibrating_end;
               break;
           case bldc_control_calibrating_end:
-              if ( (__HAL_TIM_GET_COUNTER(&htim3) < 1200) && (__HAL_TIM_GET_COUNTER(&htim3) >= 0) ){
+              if ( (__HAL_TIM_GET_COUNTER(&htim3) < 1400) && (__HAL_TIM_GET_COUNTER(&htim3) >= 0) ){
                   __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 999); /// максисальная скорость
                   BLDC_CONTROL_SET_DIR_FWD();
               } else{
-                  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 501); /// минимальная скорость, приближаемся к датчику
+                  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 600); /// минимальная скорость, приближаемся к датчику
                   BLDC_CONTROL_SET_DIR_FWD();
               }
               break;
           case bldc_control_calibrated_end:
 
-              if ( (__HAL_TIM_GET_COUNTER(&htim3) >= 1000) || (__HAL_TIM_GET_COUNTER(&htim3) <= 500)){
-                  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 999); /// ~ максисальная скорость
+              if ( (__HAL_TIM_GET_COUNTER(&htim3) >= 800) || (__HAL_TIM_GET_COUNTER(&htim3) <= 500)){
+                  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 700); /// ~ максисальная скорость
                   BLDC_CONTROL_SET_DIR_BWD();
               }else { /// Отъехали от края на безопасное расстояние, можно останавливаться и готовиться к работе
                   __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
