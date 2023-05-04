@@ -43,12 +43,12 @@
 
 /// \def BLDC_CONTROL_SET_DIR_FWD
 /// \brief Макрос для установки направления движения двигателя вперёд (в направлении ОТ двигателя по рельсе).
-/// \warning Использовать с осторожностью, т.к. подключение пина, отвечающего за направление вращения двигателя, может измениться
+/// \warning �?спользовать с осторожностью, т.к. подключение пина, отвечающего за направление вращения двигателя, может измениться
 #define BLDC_CONTROL_SET_DIR_FWD() HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET)
 
 /// \def BLDC_CONTROL_SET_DIR_BWD
 /// \brief Макрос для установки направления движения двигателя назад (в направлении К двигателю по рельсе).
-/// \warning Использовать с осторожностью, т.к. подключение пина, отвечающего за направление вращения двигателя, может измениться
+/// \warning �?спользовать с осторожностью, т.к. подключение пина, отвечающего за направление вращения двигателя, может измениться
 #define BLDC_CONTROL_SET_DIR_BWD() HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET)
 
 /// \def BLDC_CONTROL_INTERNAL_CLK_FREQ
@@ -71,6 +71,7 @@ TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim5;
 TIM_HandleTypeDef htim9;
+TIM_HandleTypeDef htim10;
 
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_tx;
@@ -79,12 +80,12 @@ DMA_HandleTypeDef hdma_usart2_tx;
 char usart_buffer[255] = {'\0'};
 uint8_t recieve_buffer[255] = {'\0'};
 char transmit_buffer[255] = {'\0'};
-uint32_t speed_coeff = 0;
-uint16_t optical_count = 0;
 int32_t mechanical_count = 0;
 int32_t speed = 0;
 uint16_t prev_pos_ticks = 0;
 double speed_rpm = 0.;
+uint16_t encoder_ic = 0;
+int32_t ticks_div;
 uint16_t sampling_frequency;
 uint8_t direct;
 states state;
@@ -101,6 +102,7 @@ static void MX_TIM3_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_TIM5_Init(void);
 static void MX_TIM9_Init(void);
+static void MX_TIM10_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -130,23 +132,26 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
     if (htim->Instance == TIM9) {
         /// Считывание показаний оптического энкодера
         /// \warning Засунуть в отдельную функцию!
-        
-        speed_rpm = get_speed_rpm(&htim3, prev_pos_ticks, BLDC_CONTROL_ENCODER_RES, sampling_frequency);
+        uint16_t curr_pos_ticks = __HAL_TIM_GET_COUNTER(&htim3);
+//        speed_rpm = get_speed_rpm_freq(&htim3, prev_pos_ticks, curr_pos_ticks, BLDC_CONTROL_ENCODER_RES,
+//                                       sampling_frequency);
+
+        ticks_div = (int32_t) curr_pos_ticks -  (int32_t) prev_pos_ticks;
         prev_pos_ticks = __HAL_TIM_GET_COUNTER(&htim3);
     }
     if (htim->Instance == TIM5) {
         switch (state){
             case bldc_control_before_calibration:
-                snprintf(transmit_buffer, sizeof(transmit_buffer), "before_calibration. PWM: %lu , Optical encoder: %ld\n Speed: %f rpm\n\r",TIM2->CCR1, __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "before_calibration. PWM: %lu , Optical encoder: %ld\n Speed: %f rpm\n\r",TIM2->CCR1, __HAL_TIM_GET_COUNTER(&htim3),  speed_rpm);
                 break;
             case bldc_control_calibrating_zero:
-                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrating_zero. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrating_zero. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3),  speed_rpm);
                 break;
             case bldc_control_calibrated_zero:
-                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrated_zero. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrated_zero. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3),  speed_rpm);
                 break;
             case bldc_control_calibrating_end:
-                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrating_end. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrating_end. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3),  speed_rpm);
                 break;
             case bldc_control_calibrated_end:
                 snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrated_end. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
@@ -165,7 +170,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
 }
 
 /// \brief Callback для внешних прерываний с концевых датчиков
-/// \note Прерывания на ножке PC9 генерируются по спадающему фронту
+/// \note Прерывания на ножках PC9, PC8 генерируются по спадающему фронту
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
     /// Сработал концевой датчик B (дальше от движка)
     if (GPIO_Pin == TS_B_IN_Pin) {
@@ -193,6 +198,15 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
     }
 }
 
+/// \brief Callback прерывания по захвату переднего фронта сигнала
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
+    /// Ножка, подключенная к одному из каналов энкодера
+    if(htim->Instance == TIM10){
+        encoder_ic = __HAL_TIM_GET_COMPARE(&htim10, TIM_CHANNEL_1);    //read TIM10 channel 1 capture value
+        __HAL_TIM_SET_COUNTER(&htim10, 0);    //reset counter after input capture interrupt occurs
+        speed_rpm = get_speed_rpm_period(encoder_ic, BLDC_CONTROL_ENCODER_RES, 100000);
+    }
+}
 
 /* USER CODE END 0 */
 
@@ -233,6 +247,7 @@ int main(void)
   MX_TIM4_Init();
   MX_TIM5_Init();
   MX_TIM9_Init();
+  MX_TIM10_Init();
   /* USER CODE BEGIN 2 */
 
 
@@ -240,19 +255,21 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  HAL_TIM_PWM_Start_IT(&htim2, TIM_CHANNEL_1);
   HAL_TIM_Encoder_Start_IT(&htim1, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start_IT(&htim2, TIM_CHANNEL_1);
   HAL_TIM_Encoder_Start_IT(&htim3, TIM_CHANNEL_1);
   HAL_TIM_Base_Start_IT(&htim4);
   HAL_TIM_Base_Start_IT(&htim5);
   HAL_TIM_Base_Start_IT(&htim9);
+  HAL_TIM_IC_Start_IT(&htim10, TIM_CHANNEL_1);
+
   __HAL_TIM_SET_COUNTER(&htim1, 50);
   sampling_frequency = BLDC_CONTROL_INTERNAL_CLK_FREQ / (TIM9->PSC + 1) / (TIM9->ARR + 1);
 //  HAL_UART_Receive_DMA(&huart2, (uint8_t *) recieve_buffer, 3);
   /// < Устанавливаем начальное состояние системы
   state = bldc_control_before_calibration;
   /// < Устанавливаем начальное состояние системы
-  /// \warning АКТИВИРОВАТЬ ПО НАЖАТИЮ КНОПКИ!
+  /// \warning АКТ�?В�?РОВАТЬ ПО НАЖАТ�?Ю КНОПК�?
   state = bldc_control_calibrating_zero;
 
   while (1){
@@ -296,6 +313,7 @@ int main(void)
 
       }
     /* USER CODE END WHILE */
+
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
@@ -620,6 +638,51 @@ static void MX_TIM9_Init(void)
 }
 
 /**
+  * @brief TIM10 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM10_Init(void)
+{
+
+  /* USER CODE BEGIN TIM10_Init 0 */
+
+  /* USER CODE END TIM10_Init 0 */
+
+  TIM_IC_InitTypeDef sConfigIC = {0};
+
+  /* USER CODE BEGIN TIM10_Init 1 */
+
+  /* USER CODE END TIM10_Init 1 */
+  htim10.Instance = TIM10;
+  htim10.Init.Prescaler = 159;
+  htim10.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim10.Init.Period = 65535;
+  htim10.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim10.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim10) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_IC_Init(&htim10) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
+  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
+  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
+  sConfigIC.ICFilter = 0;
+  if (HAL_TIM_IC_ConfigChannel(&htim10, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM10_Init 2 */
+
+  /* USER CODE END TIM10_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -680,6 +743,7 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(MOTOR_DIR_GPIO_Port, MOTOR_DIR_Pin, GPIO_PIN_RESET);

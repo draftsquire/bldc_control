@@ -61,12 +61,24 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define MOTOR_DIR_Pin GPIO_PIN_1
 #define MOTOR_DIR_GPIO_Port GPIOA
+#define TIM2_PWM_CH1_Pin GPIO_PIN_5
+#define TIM2_PWM_CH1_GPIO_Port GPIOA
+#define TIM3_OPT_CH1_Pin GPIO_PIN_6
+#define TIM3_OPT_CH1_GPIO_Port GPIOA
+#define TIM3_OPT_CH2_Pin GPIO_PIN_7
+#define TIM3_OPT_CH2_GPIO_Port GPIOA
 #define TS_A_IN_Pin GPIO_PIN_8
 #define TS_A_IN_GPIO_Port GPIOC
 #define TS_A_IN_EXTI_IRQn EXTI9_5_IRQn
 #define TS_B_IN_Pin GPIO_PIN_9
 #define TS_B_IN_GPIO_Port GPIOC
 #define TS_B_IN_EXTI_IRQn EXTI9_5_IRQn
+#define TIM1_MECH_CH1_Pin GPIO_PIN_8
+#define TIM1_MECH_CH1_GPIO_Port GPIOA
+#define TIM1_MECH_CH2_Pin GPIO_PIN_9
+#define TIM1_MECH_CH2_GPIO_Port GPIOA
+#define TIM10_IC_CH1_Pin GPIO_PIN_8
+#define TIM10_IC_CH1_GPIO_Port GPIOB
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
