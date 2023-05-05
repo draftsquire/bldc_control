@@ -30,6 +30,7 @@
 #include <encoder.h>
 #include <pwm.h>
 #include <state_machine.h>
+#include <speed_control.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -58,6 +59,20 @@
 /// \def BLDC_CONTROL_ENCODER_RES
 /// \brief Разрешение измерительного энкодера, имп./об.
 #define BLDC_CONTROL_ENCODER_RES 64
+
+
+/// \def BLDC_CONTROL_CART_LEN
+/// \brief Длина каретки
+#define BLDC_CONTROL_CART_LEN 45
+
+/// \def BLDC_CONTROL_GUIDE_LEN
+/// \brief Фактическая длина рабочей зоны в мм
+#define BLDC_CONTROL_GUIDE_LEN (250 - BLDC_CONTROL_CART_LEN)
+
+/// \def BLDC_CONTROL_PROPORTIONAL_COEFF
+/// \brief Коэффициент пропорционального регулятора
+#define BLDC_CONTROL_PROPORTIONAL_COEFF 3
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -80,12 +95,20 @@ DMA_HandleTypeDef hdma_usart2_tx;
 char usart_buffer[255] = {'\0'};
 uint8_t recieve_buffer[255] = {'\0'};
 char transmit_buffer[255] = {'\0'};
-int32_t mechanical_count = 0;
-int32_t speed = 0;
+int16_t mechanical_count = 0;
+int16_t speed = 0;
 uint16_t prev_pos_ticks = 0;
 double speed_rpm = 0.;
+
+double position_mm = 0.;
+uint16_t max_position_ticks = 0;
+
+uint16_t desired_position_ticks = 0;
+double desired_position_mm = 0;
+double ticks_per_mm = 0.;
+int32_t positioning_error_ticks = 0;
 uint16_t encoder_ic = 0;
-int32_t ticks_div;
+
 uint16_t sampling_frequency;
 uint8_t direct;
 states state;
@@ -111,21 +134,27 @@ static void MX_TIM10_Init(void);
 /* USER CODE BEGIN 0 */
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
-    if ((htim->Instance == TIM4) && (state == bldc_control_before_calibration)) {
+    if ((htim->Instance == TIM4) && ((state == bldc_control_before_calibration) || (state == bldc_control_calibrated))) {
         /// Считывание показаний механического энкодера
         /// \warning Засунуть в отдельную функцию!
-        mechanical_count = 10 * __HAL_TIM_GET_COUNTER(&htim1);
-        speed = mechanical_count - 500;
-        direct = __HAL_TIM_IS_TIM_COUNTING_DOWN(&htim1);
-        if (speed == 0) {
-            __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
-        } else if (speed < 0) {
-            __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, (-speed + 500) - 1); // длина импульса
-            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
-        } else {
-            __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, (speed + 500) - 1);
-            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
+        mechanical_count = (int16_t) (10 * __HAL_TIM_GET_COUNTER(&htim1));
+        if (mechanical_count > 500){
+            mechanical_count = 500;
+            __HAL_TIM_SET_COUNTER(&htim1, 50);
+        }else if (mechanical_count < -500){
+            mechanical_count = -500;
+            __HAL_TIM_SET_COUNTER(&htim1, UINT16_MAX - 50);
         }
+        /// speed  [-500..500]
+        if(mechanical_count < 0){
+            speed = (int16_t) (mechanical_count - 500);
+        } else if (mechanical_count > 0){
+            speed = (int16_t) (mechanical_count + 500);
+        }else {
+            speed = 0;
+        }
+
+        set_speed(speed, &htim2);
 
     }
     ///Таймер на рассчёт скорости, 20 Гц
@@ -133,31 +162,33 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
         /// Считывание показаний оптического энкодера
         /// \warning Засунуть в отдельную функцию!
         uint16_t curr_pos_ticks = __HAL_TIM_GET_COUNTER(&htim3);
-//        speed_rpm = get_speed_rpm_freq(&htim3, prev_pos_ticks, curr_pos_ticks, BLDC_CONTROL_ENCODER_RES,
-//                                       sampling_frequency);
-
-        ticks_div = (int32_t) curr_pos_ticks -  (int32_t) prev_pos_ticks;
         prev_pos_ticks = __HAL_TIM_GET_COUNTER(&htim3);
     }
     if (htim->Instance == TIM5) {
         switch (state){
             case bldc_control_before_calibration:
-                snprintf(transmit_buffer, sizeof(transmit_buffer), "before_calibration. PWM: %lu , Optical encoder: %ld\n Speed: %f rpm\n\r",TIM2->CCR1, __HAL_TIM_GET_COUNTER(&htim3),  speed_rpm);
+//                snprintf(transmit_buffer, sizeof(transmit_buffer), "before_calibration. PWM: %lu , Optical encoder: %ld\n Speed: %f rpm\n\r",TIM2->CCR1, __HAL_TIM_GET_COUNTER(&htim3),  speed_rpm);
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "before_calibration. PWM: %lu ,speed: %d, mech_count %d\n\r",TIM2->CCR1, speed, mechanical_count);
+
                 break;
             case bldc_control_calibrating_zero:
-                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrating_zero. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3),  speed_rpm);
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrating_zero. Optical encoder: %hd\n Speed: %f rpm\n\r", (int16_t) __HAL_TIM_GET_COUNTER(&htim3),  speed_rpm);
                 break;
             case bldc_control_calibrated_zero:
-                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrated_zero. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3),  speed_rpm);
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrated_zero. Optical encoder: %hd\n Speed: %f rpm\n\r",(int16_t)  __HAL_TIM_GET_COUNTER(&htim3),  speed_rpm);
                 break;
             case bldc_control_calibrating_end:
-                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrating_end. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3),  speed_rpm);
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrating_end. Optical encoder: %hd\n Speed: %f rpm\n\r",(int16_t)  __HAL_TIM_GET_COUNTER(&htim3),  speed_rpm);
                 break;
             case bldc_control_calibrated_end:
-                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrated_end. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "calibrated_end. Optical encoder: %hd\n Speed: %f rpm\n\r",(int16_t)  __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
                 break;
             case bldc_control_calibrated:
-                snprintf(transmit_buffer, sizeof(transmit_buffer), "Calibrated!!!. Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "Calibrated!!!. Optical encoder: %hd\n Speed: %f rpm\n\r",(int16_t)  __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+                break;
+            case bldc_control_ready_4_positioning:
+                position_mm =(double) __HAL_TIM_GET_COUNTER(&htim3) * (double) BLDC_CONTROL_GUIDE_LEN / (double)max_position_ticks;
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "Ready for positioning. Position, mm: %f\n Speed: %f rpm\n\r", position_mm, speed_rpm);
                 break;
             default:
                 snprintf(transmit_buffer, sizeof(transmit_buffer), "Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
@@ -175,23 +206,23 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
     /// Сработал концевой датчик B (дальше от движка)
     if (GPIO_Pin == TS_B_IN_Pin) {
         /// "Сброс" счётчика механического энкодера
-        __HAL_TIM_SET_COUNTER(&htim1, 50);
+        __HAL_TIM_SET_COUNTER(&htim1, 0);
         /// Тормоз двигателя
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+        set_speed(0, &htim2);
 
         if (state == bldc_control_calibrating_end){
+            max_position_ticks = __HAL_TIM_GET_COUNTER(&htim3);
+            ticks_per_mm =  round((double)max_position_ticks / (double) BLDC_CONTROL_GUIDE_LEN);
             state = bldc_control_calibrated_end;
         }
 
     /// Сработал концевой датчик A (Ближе к движку)
     } else if (GPIO_Pin == TS_A_IN_Pin) {
         /// "Сброс" счётчика механического энкодера
-        __HAL_TIM_SET_COUNTER(&htim1, 50);
+        __HAL_TIM_SET_COUNTER(&htim1, 0);
         /// Тормоз двигателя
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
-        __HAL_TIM_SET_COUNTER(&htim3, 0);
+        set_speed(0, &htim2);
         if(state == bldc_control_calibrating_zero){
-
             state = bldc_control_calibrated_zero;
         }
 
@@ -263,7 +294,7 @@ int main(void)
   HAL_TIM_Base_Start_IT(&htim9);
   HAL_TIM_IC_Start_IT(&htim10, TIM_CHANNEL_1);
 
-  __HAL_TIM_SET_COUNTER(&htim1, 50);
+  set_speed(0, &htim2);
   sampling_frequency = BLDC_CONTROL_INTERNAL_CLK_FREQ / (TIM9->PSC + 1) / (TIM9->ARR + 1);
 //  HAL_UART_Receive_DMA(&huart2, (uint8_t *) recieve_buffer, 3);
   /// < Устанавливаем начальное состояние системы
@@ -271,8 +302,10 @@ int main(void)
   /// < Устанавливаем начальное состояние системы
   /// \warning АКТ�?В�?РОВАТЬ ПО НАЖАТ�?Ю КНОПК�?
   state = bldc_control_calibrating_zero;
+  double error = 0.;
 
   while (1){
+
       switch (state) {
           case bldc_control_calibrating_zero :
               __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 600); /// ~ минимальная скорость
@@ -303,9 +336,21 @@ int main(void)
               }else { /// Отъехали от края на безопасное расстояние, можно останавливаться и готовиться к работе
                   __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
                   state = bldc_control_calibrated;
-                  /// \warning Временно передаём ручное управление
-                  state = bldc_control_before_calibration;
+//                  /// \warning Временно передаём ручное управление
+//                  state = bldc_control_ready_4_positioning;
               }
+              break;
+          case bldc_control_ready_4_positioning:
+              desired_position_mm = 100.;
+              snprintf(transmit_buffer, sizeof(transmit_buffer), "Desired position: %0.1f mm\n\r",desired_position_mm);
+              desired_position_ticks = (uint16_t) (desired_position_mm * ticks_per_mm);
+              HAL_Delay(1000);
+              HAL_UART_Transmit_DMA(&huart2, (uint8_t *) transmit_buffer, strlen(transmit_buffer));
+
+              break;
+          case bldc_control_positioning:
+              positioning_error_ticks = desired_position_ticks - (uint16_t)__HAL_TIM_GET_COUNTER(&htim3);
+
               break;
           default:
               break;
@@ -381,7 +426,7 @@ static void MX_TIM1_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 100;
+  htim1.Init.Period = 65535;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -453,8 +498,7 @@ static void MX_TIM2_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM2_Init 2 */
-  /// \warning ????????
-  pwm_custom_init(TIM2, PWM_F);
+
   /* USER CODE END TIM2_Init 2 */
   HAL_TIM_MspPostInit(&htim2);
 

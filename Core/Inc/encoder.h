@@ -5,12 +5,12 @@
 
 /// \brief Рассчёт скорости вращения энкодера
 ///
-/// \param[in] encoder_TIM - Указатель на структуру таймера, к которому подключен энеодер
+/// \param[in] encoder_tim - Указатель на структуру таймера, к которому подключен энеодер
 /// \param[in] encoder_resolution - Разрешение энкодера, имп./об.
 /// \param[in] samp_freq - Частота опроса энкодера
 /// \return скорость вращения, rpm
 double
-get_speed_rpm_freq(TIM_HandleTypeDef *encoder_TIM, uint16_t prev_ticks, uint16_t curr_ticks, uint16_t encoder_resolution,
+get_speed_rpm_freq(TIM_HandleTypeDef *encoder_tim, uint16_t prev_ticks, uint16_t curr_ticks, uint16_t encoder_resolution,
                    uint16_t samp_freq);
 /// \brief Рассчёт скорости вращения энкодера. Метод, основанный на измерении периода
 ///

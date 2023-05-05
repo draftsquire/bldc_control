@@ -1,24 +1,20 @@
 #include "speed_control.h"
 
-int16_t Limit_and_get_motor_control_timer_value(int16_t lower_limit, int16_t upper_limit, TIM_HandleTypeDef* htim3) {
-	int16_t count = __HAL_TIM_GET_COUNTER(htim3);
-	if (count < 0) {
-		TIM3 -> CNT = 0;
-	} else if (count > 100) {
-		TIM3 -> CNT = 100;
-	}
-	return count;
+///// \brief Установка скорости вращения движка в процентах
+/////
+///// \param speed[in] - Величина скорости в условных единицах [-500..500]
+///// \param pwm_tim[in] - Хэндлер таймера, настроенного на генерацию ШИМ
+void set_speed(int16_t speed, TIM_HandleTypeDef *pwm_tim) {
+
+    if (speed == 0) {
+        __HAL_TIM_SET_COMPARE(pwm_tim, TIM_CHANNEL_1, 0);
+    } else if (speed < 0) {
+        __HAL_TIM_SET_COMPARE(pwm_tim, TIM_CHANNEL_1, (-speed) - 1); // длина импульса
+        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
+    } else {
+        __HAL_TIM_SET_COMPARE(pwm_tim, TIM_CHANNEL_1, (speed) - 1);
+        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
+    }
+
 }
 
-int16_t Get_PWM_width_from_speed_value(
-		int16_t lower_pwm_width_limit,
-		int16_t upper_pwm_width_limit,
-		int16_t lower_speed_value_limit,
-		int16_t upper_speed_value_limit,
-		int16_t speed_value) {
-	return (int16_t)
-			(lower_pwm_width_limit +
-			(upper_pwm_width_limit - lower_pwm_width_limit) /
-			(upper_speed_value_limit - lower_speed_value_limit) *
-			speed_value);
-}

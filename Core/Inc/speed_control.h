@@ -3,13 +3,11 @@
 
 #include "main.h"
 
-int16_t Limit_and_get_motor_control_timer_value(int16_t lower_limit, int16_t upper_limit, TIM_HandleTypeDef* htim3);
+///// \brief Установка скорости вращения движка в процентах
+/////
+///// \param speed[in] - Величина скорости в условных единицах [-500..500]
+///// \param pwm_tim[in] - Хэндлер таймера, настроенного на генерацию ШИМ
+void set_speed(int16_t speed, TIM_HandleTypeDef *pwm_tim);
 
-int16_t Get_PWM_width_from_speed_value(
-		int16_t lower_pwm_width,
-		int16_t upper_pwm_width,
-		int16_t lower_speed_value_limit,
-		int16_t upper_speed_value_limit,
-		int16_t speed_value);
 
 #endif /* INC_SPEED_CONTROL_H_ */
