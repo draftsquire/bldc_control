@@ -77,6 +77,9 @@ void Error_Handler(void);
 #define TIM1_MECH_CH1_GPIO_Port GPIOA
 #define TIM1_MECH_CH2_Pin GPIO_PIN_9
 #define TIM1_MECH_CH2_GPIO_Port GPIOA
+#define EN_BUTTON_IN_Pin GPIO_PIN_6
+#define EN_BUTTON_IN_GPIO_Port GPIOB
+#define EN_BUTTON_IN_EXTI_IRQn EXTI9_5_IRQn
 #define TIM10_IC_CH1_Pin GPIO_PIN_8
 #define TIM10_IC_CH1_GPIO_Port GPIOB
 /* USER CODE BEGIN Private defines */
