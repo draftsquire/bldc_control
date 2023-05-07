@@ -2,6 +2,9 @@
 #define INC_SPEED_CONTROL_H_
 
 #include "main.h"
+/// \def BLDC_CONTROL_MAX_CONTROL
+/// \brief Максимальное управляющее воздействие для установки скорости
+#define BLDC_CONTROL_MAX_CONTROL 500
 
 /// \brief Установка скорости вращения движка в процентах
 ///

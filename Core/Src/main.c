@@ -69,9 +69,7 @@
 /// \brief Фактическая длина рабочей зоны в мм
 #define BLDC_CONTROL_GUIDE_LEN (250 - BLDC_CONTROL_CART_LEN)
 
-/// \def BLDC_CONTROL_MAX_CONTROL
-/// \brief Максимальное управляющее воздействие для установки скорости
-#define BLDC_CONTROL_MAX_CONTROL 500
+
 
 
 
@@ -103,18 +101,18 @@ DMA_HandleTypeDef hdma_usart2_tx;
 char usart_buffer[255] = {'\0'};
 uint8_t recieve_buffer[255] = {'\0'};
 char transmit_buffer[255] = {'\0'};
-int16_t mechanical_count = 0;
 int16_t control_speed = 0;
-uint16_t prev_pos_ticks = 0;
+int16_t position_ticks = 0;
+
 double speed_rpm = 0.;
 
 double position_mm = 0.;
 uint16_t max_position_ticks = 0;
 
-int16_t desired_position_ticks = 0;
+uint16_t desired_position_ticks = 0;
 double desired_position_mm = 0;
 double ticks_per_mm = 0.;
-double p_coeff;
+const double p_coeff = 1;
 int16_t positioning_error_ticks = 0;
 uint16_t encoder_ic = 0;
 
@@ -145,27 +143,28 @@ static void MX_TIM10_Init(void);
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
     if ((htim->Instance == TIM4) && ((state == bldc_control_before_calibration) || (state == bldc_control_calibrated))) {
         /// Считывание показаний механического энкодера
-        mechanical_count = (int16_t) (10 * __HAL_TIM_GET_COUNTER(&htim1));
-        if (mechanical_count > BLDC_CONTROL_MAX_CONTROL){
-            mechanical_count = BLDC_CONTROL_MAX_CONTROL;
+        control_speed = (int16_t) (10 * __HAL_TIM_GET_COUNTER(&htim1));
+        if (control_speed > BLDC_CONTROL_MAX_CONTROL){
+            control_speed = BLDC_CONTROL_MAX_CONTROL;
             __HAL_TIM_SET_COUNTER(&htim1, 50);
-        }else if (mechanical_count < - BLDC_CONTROL_MAX_CONTROL){
-            mechanical_count = - BLDC_CONTROL_MAX_CONTROL;
+        }else if (control_speed < - BLDC_CONTROL_MAX_CONTROL){
+            control_speed = - BLDC_CONTROL_MAX_CONTROL;
             __HAL_TIM_SET_COUNTER(&htim1, UINT16_MAX - 50);
         }
         /// speed  [-500..500]
-        if(mechanical_count < 0){
-            control_speed = (int16_t) (mechanical_count - BLDC_CONTROL_MAX_CONTROL);
-        } else if (mechanical_count > 0){
-            control_speed = (int16_t) (mechanical_count + BLDC_CONTROL_MAX_CONTROL);
-        }else {
-            control_speed = 0;
-        }
         set_speed(control_speed, &htim2);
     }
     /// С частотой регулирующего Ш�?М
     if ((htim == &htim2) && (state == bldc_control_positioning) ){
-        positioning_error_ticks =  (int16_t)(desired_position_ticks - __HAL_TIM_GET_COUNTER(&htim3));
+        position_ticks =  (int16_t)__HAL_TIM_GET_COUNTER(&htim3);
+        positioning_error_ticks =  (int16_t)(desired_position_ticks - position_ticks);
+        control_speed = (int16_t) round(p_coeff * positioning_error_ticks);
+        /// В отдельную функцию
+        if (control_speed > 500){
+            control_speed = 500;
+        }else if (control_speed < -500){
+            control_speed = -500;
+        }
         set_speed(control_speed, &htim2);
 
     }
@@ -173,7 +172,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
         switch (state){
             case bldc_control_before_calibration:
 //                snprintf(transmit_buffer, sizeof(transmit_buffer), "before_calibration. PWM: %lu , Optical encoder: %ld\n Speed: %f rpm\n\r",TIM2->CCR1, __HAL_TIM_GET_COUNTER(&htim3),  speed_rpm);
-                snprintf(transmit_buffer, sizeof(transmit_buffer), "before_calibration. PWM: %lu ,speed: %d, mech_count %d\n\r", TIM2->CCR1, control_speed, mechanical_count);
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "before_calibration. PWM: %lu ,speed: %d\n\r", TIM2->CCR1, control_speed);
 
                 break;
             case bldc_control_calibrating_zero:
@@ -196,7 +195,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
                 snprintf(transmit_buffer, sizeof(transmit_buffer), "Ready for positioning. Position, mm: %f\n Speed: %f rpm\n\r", position_mm, speed_rpm);
                 break;
             default:
-                snprintf(transmit_buffer, sizeof(transmit_buffer), "Optical encoder: %ld\n Speed: %f rpm\n\r", __HAL_TIM_GET_COUNTER(&htim3), speed_rpm);
+                snprintf(transmit_buffer, sizeof(transmit_buffer), "Coordinates: %0.2f, Optical encoder: %ld\n Control speed: %d rpm\n\r",get_mm_from_ticks(BLDC_CONTROL_GUIDE_LEN, max_position_ticks, __HAL_TIM_GET_COUNTER(&htim3)),
+                         __HAL_TIM_GET_COUNTER(&htim3), control_speed);
                 break;
         }
 
@@ -220,6 +220,10 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
             ticks_per_mm =  round((double)max_position_ticks / (double) BLDC_CONTROL_GUIDE_LEN);
             state = bldc_control_calibrated_end;
         }
+
+        if (state == bldc_control_positioning){
+            state = bldc_control_calibrated;
+        }
     /// Сработал концевой датчик A (Ближе к движку)
     } else if (GPIO_Pin == TS_A_IN_Pin) {
         /// "Сброс" счётчика механического энкодера
@@ -228,6 +232,9 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
         set_speed(0, &htim2);
         if(state == bldc_control_calibrating_zero){
             state = bldc_control_calibrated_zero;
+        }
+        if (state == bldc_control_positioning){
+            state = bldc_control_calibrated;
         }
     } else if (GPIO_Pin == EN_BUTTON_IN_Pin){
         if(state == bldc_control_before_calibration){
@@ -311,18 +318,16 @@ int main(void)
 //  HAL_UART_Receive_DMA(&huart2, (uint8_t *) recieve_buffer, 3);
   /// < Устанавливаем начальное состояние системы
   state = bldc_control_before_calibration;
-  /// < Устанавливаем начальное состояние системы
-  /// \warning АКТ�?В�?РОВАТЬ ПО НАЖАТ�?Ю КНОПК�?
-//  state = bldc_control_calibrating_zero;
+
   double error = 0.;
 
   while (1){
 
       switch (state) {
           case bldc_control_calibrating_zero :
-//              __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 600); /// ~ минимальная скорость
-//              BLDC_CONTROL_SET_DIR_BWD();
-              set_speed(- BLDC_CONTROL_MAX_CONTROL / 5, &htim2);
+              __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 600); /// ~ минимальная скорость
+              BLDC_CONTROL_SET_DIR_BWD();
+//              set_speed(- BLDC_CONTROL_MAX_CONTROL / 5, &htim2);
               break;
           case bldc_control_calibrated_zero:
               /// Ожидание окончание вращения энкодера по инерции после столкновения с датчиком
@@ -341,7 +346,7 @@ int main(void)
               break;
           case bldc_control_calibrated_end:
               if ( (__HAL_TIM_GET_COUNTER(&htim3) >= 800) || (__HAL_TIM_GET_COUNTER(&htim3) <= 500)){
-                  set_speed(BLDC_CONTROL_MAX_CONTROL / 2, &htim2);
+                  set_speed(- BLDC_CONTROL_MAX_CONTROL / 2, &htim2);
               }else { /// Отъехали от края на безопасное расстояние, можно останавливаться и готовиться к работе
                   set_speed(0, &htim2);
                   state = bldc_control_calibrated;
@@ -350,16 +355,15 @@ int main(void)
           case bldc_control_ready_4_positioning:
               /// \warning
               desired_position_mm = 100.;
-              snprintf(transmit_buffer, sizeof(transmit_buffer), "Desired position: %0.1f mm\n\r",desired_position_mm);
-              desired_position_ticks = (uint16_t) (desired_position_mm * ticks_per_mm);
+              desired_position_ticks = get_ticks_from_mm(BLDC_CONTROL_GUIDE_LEN, max_position_ticks, desired_position_mm);
+              snprintf(transmit_buffer, sizeof(transmit_buffer), "Desired position: %0.1f mm, %d ticks\n\r",desired_position_mm, desired_position_ticks);
               HAL_Delay(1000);
               HAL_UART_Transmit_DMA(&huart2, (uint8_t *) transmit_buffer, strlen(transmit_buffer));
               state = bldc_control_positioning;
               break;
-          case bldc_control_positioning:
-              positioning_error_ticks = desired_position_ticks - (uint16_t)__HAL_TIM_GET_COUNTER(&htim3);
-
-              break;
+//          case bldc_control_positioning:
+//
+//              break;
           default:
               break;
 
