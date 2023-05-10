@@ -19,4 +19,11 @@ typedef enum {
     bldc_control_collision_error ///< коллизия
 }states;
 
+/// \typedef enum control_type
+/// \brief Перечисление для типов регялторов
+typedef enum{
+    bldc_control_proportional, /// П - регулятор
+    bldc_control_prop_diff /// ПД - регулятор
+}control_type;
+
 #endif //BLDC_CONTROL_STATE_MACHINE_H

@@ -24,11 +24,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 
 
 #include <encoder.h>
-#include <pwm.h>
+
 #include <state_machine.h>
 #include <speed_control.h>
 /* USER CODE END Includes */
@@ -71,14 +72,6 @@
 
 
 
-
-
-
-
-/// \def BLDC_CONTROL_PROPORTIONAL_COEFF
-/// \brief Коэффициент пропорционального регулятора
-#define BLDC_CONTROL_PROPORTIONAL_COEFF 3
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -112,7 +105,9 @@ uint16_t max_position_ticks = 0;
 uint16_t desired_position_ticks = 0;
 double desired_position_mm = 0;
 double ticks_per_mm = 0.;
-const double p_coeff = 1;
+double p_coeff = 1;
+double d_coeff = 1;
+control_type control = bldc_control_proportional;
 int16_t positioning_error_ticks = 0;
 uint16_t encoder_ic = 0;
 
@@ -158,8 +153,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
     if ((htim == &htim2) && (state == bldc_control_positioning) ){
         position_ticks =  (int16_t)__HAL_TIM_GET_COUNTER(&htim3);
         positioning_error_ticks =  (int16_t)(desired_position_ticks - position_ticks);
-        control_speed = (int16_t) round(p_coeff * positioning_error_ticks);
-        /// В отдельную функцию
+        if (control == bldc_control_proportional){
+            control_speed = (int16_t) round(p_coeff * positioning_error_ticks);
+        }else if ( control == bldc_control_prop_diff){
+            control_speed = 0;
+        }
         if (control_speed > 500){
             control_speed = 500;
         }else if (control_speed < -500){
@@ -232,15 +230,18 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
         set_speed(0, &htim2);
         if(state == bldc_control_calibrating_zero){
             state = bldc_control_calibrated_zero;
-        }
-        if (state == bldc_control_positioning){
+        }else if (state == bldc_control_positioning){
             state = bldc_control_calibrated;
+        }else {
+            state = bldc_control_collision_error;
         }
     } else if (GPIO_Pin == EN_BUTTON_IN_Pin){
         if(state == bldc_control_before_calibration){
             state = bldc_control_calibrating_zero;
         }else if (state == bldc_control_calibrated){
             state = bldc_control_ready_4_positioning;
+        }else {
+            state = bldc_control_collision_error;
         }
     }
 
@@ -354,7 +355,7 @@ int main(void)
               break;
           case bldc_control_ready_4_positioning:
               /// \warning
-              desired_position_mm = 100.;
+
               desired_position_ticks = get_ticks_from_mm(BLDC_CONTROL_GUIDE_LEN, max_position_ticks, desired_position_mm);
               snprintf(transmit_buffer, sizeof(transmit_buffer), "Desired position: %0.1f mm, %d ticks\n\r",desired_position_mm, desired_position_ticks);
               HAL_Delay(1000);

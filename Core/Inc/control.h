@@ -1,0 +1,8 @@
+//
+// Created by PC-HOME on 10.05.2023.
+//
+
+#ifndef BLDC_CONTROL_CONTROL_H
+#define BLDC_CONTROL_CONTROL_H
+
+#endif //BLDC_CONTROL_CONTROL_H
