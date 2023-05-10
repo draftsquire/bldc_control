@@ -217,10 +217,10 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
             max_position_ticks = __HAL_TIM_GET_COUNTER(&htim3);
             ticks_per_mm =  round((double)max_position_ticks / (double) BLDC_CONTROL_GUIDE_LEN);
             state = bldc_control_calibrated_end;
-        }
-
-        if (state == bldc_control_positioning){
+        }else if (state == bldc_control_positioning){
             state = bldc_control_calibrated;
+        }else {
+            state = bldc_control_collision_error;
         }
     /// Сработал концевой датчик A (Ближе к движку)
     } else if (GPIO_Pin == TS_A_IN_Pin) {
@@ -240,8 +240,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
             state = bldc_control_calibrating_zero;
         }else if (state == bldc_control_calibrated){
             state = bldc_control_ready_4_positioning;
-        }else {
-            state = bldc_control_collision_error;
         }
     }
 
@@ -354,11 +352,10 @@ int main(void)
               }
               break;
           case bldc_control_ready_4_positioning:
-              /// \warning
-
+              set_speed(0, &htim2);
               desired_position_ticks = get_ticks_from_mm(BLDC_CONTROL_GUIDE_LEN, max_position_ticks, desired_position_mm);
               snprintf(transmit_buffer, sizeof(transmit_buffer), "Desired position: %0.1f mm, %d ticks\n\r",desired_position_mm, desired_position_ticks);
-              HAL_Delay(1000);
+//              HAL_Delay(1000);
               HAL_UART_Transmit_DMA(&huart2, (uint8_t *) transmit_buffer, strlen(transmit_buffer));
               state = bldc_control_positioning;
               break;
