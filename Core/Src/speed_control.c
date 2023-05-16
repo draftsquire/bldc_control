@@ -35,7 +35,7 @@ uint16_t get_ticks_from_mm(int16_t guide_len, uint16_t max_ticks, double coord_m
 /// \param max_ticks[in] - Максимальное количество отсчётов энкодера. Соответствует крайней точке перемещения, то есть концевому датчику B
 /// \param ticks[in] - Количество отсчётов энкодера
 /// \return Координата в миллиметрах
-double get_mm_from_ticks(int16_t guide_len, uint16_t max_ticks, uint16_t ticks){
+double get_mm_from_ticks(int16_t guide_len, uint16_t max_ticks, int16_t ticks){
     double coord_mm;
     double mm_per_tick = (double)guide_len / max_ticks;
     coord_mm = mm_per_tick * (double) ticks;

@@ -23,7 +23,8 @@ typedef enum {
 /// \brief Перечисление для типов регялторов
 typedef enum{
     bldc_control_proportional, /// П - регулятор
-    bldc_control_prop_diff /// ПД - регулятор
+    bldc_control_prop_diff, /// ПД - регулятор
+    bldc_control_prop_int /// ПИ - регулятор
 }control_type;
 
 #endif //BLDC_CONTROL_STATE_MACHINE_H
