@@ -105,7 +105,11 @@ uint16_t desired_position_ticks = 0;
 double desired_position_mm = 0;
 double p_coeff = 1;
 double d_coeff = 1;
+
 double i_coeff = 1;
+int16_t error_integral = 0;
+int16_t i_control = 0;
+double time_counter = 0.0;
 
 control_type control = bldc_control_proportional;
 int16_t error_ticks = 0;
@@ -154,13 +158,21 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
         } else if (state == bldc_control_positioning){
             position_ticks =  (int16_t)__HAL_TIM_GET_COUNTER(&htim3);
             error_ticks =  (int16_t)(desired_position_ticks - position_ticks);
+            error_integral += (int16_t) (error_ticks * time_counter);
+            time_counter += 0.1;
             if (control == bldc_control_proportional){
-                control_speed = (int16_t) round(p_coeff * error_ticks);
+                control_speed = (int16_t) (p_coeff * error_ticks);
             }else if ( control == bldc_control_prop_diff){
-                control_speed = (int16_t) round(p_coeff * error_ticks
-                        + d_coeff * (double)(error_ticks - prev_error_ticks) * 10.0 );
+                control_speed = (int16_t) (p_coeff * error_ticks
+                        + d_coeff * (error_ticks - prev_error_ticks) * 10);
             }else if ( control == bldc_control_prop_int){
-
+                i_control = (int16_t) (i_coeff * error_integral);
+                if (i_control < -100){
+                    i_control = -100;
+                }else if (i_control > 100){
+                    i_control = 100;
+                }
+                control_speed = (int16_t) (p_coeff * error_ticks + i_control);
             }
             if (control_speed > 500) {
                 control_speed = 500;
@@ -373,6 +385,10 @@ int main(void)
               HAL_UART_Transmit_DMA(&huart2, (uint8_t *) transmit_buffer, strlen(transmit_buffer));
               error_mm = get_mm_from_ticks(BLDC_CONTROL_GUIDE_LEN, max_position_ticks, error_ticks );
               position_mm = get_mm_from_ticks(BLDC_CONTROL_GUIDE_LEN, max_position_ticks, position_ticks );
+
+              error_integral = 0;
+              error_ticks = 0;
+              time_counter = 0.;
               state = bldc_control_positioning;
               break;
 //          case bldc_control_positioning:

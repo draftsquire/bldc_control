@@ -1,8 +1,9 @@
 from matplotlib import pyplot as plt
 import numpy as np
+import scipy
 
 def main():
-    filename = "log_p_0_8_d_0_6.csv"
+    filename = "log_p_0_4.csv"
     data = np.genfromtxt(filename, delimiter=";", skip_header=1, dtype=float)
     timestamps = data[:, 0]
     #converting UNIX timestamp in seconds
@@ -11,40 +12,51 @@ def main():
     error = data[:, 2]
     position = data[:, 3]
     speed_rpm = data[:, 4]
+    offset = 0
+    for i, val in enumerate(position):
+        if val > 0:
+            print(i)
+            offset = i
+            break
+    timestamps = timestamps[:-offset]
+    plt.subplot(2, 1, 2)
+    # print(position)
+    plt.plot(timestamps, position[offset:], label="$x(t)$")
+    plt.plot(timestamps, desired_pos[offset:], label="$x^*$")
+    plt.legend(loc="upper right", frameon=True)
+    plt.grid()
+    plt.minorticks_on()
+    plt.grid(which='minor', linewidth='0.1', color='black')
+    plt.xlabel("Время, с")
+    plt.ylabel("мм")
+
+    # plt.subplot(2, 2, 2)
+    # plt.plot(timestamps, desired_pos)
+    # plt.grid()
+    # plt.minorticks_on()
+    # plt.grid(which='minor', linewidth='0.1', color='black')
+    # plt.xlabel("Время, с")
+    # plt.ylabel("$x^*$, мм")
 
     plt.subplot(2, 2, 1)
-    plt.plot(timestamps, position)
-    plt.grid()
-    plt.minorticks_on()
-    plt.grid(which='minor', linewidth='0.1', color='black')
-    plt.xlabel("Время, с")
-    plt.ylabel("$x(t)$, мм")
-
-    plt.subplot(2, 2, 2)
-    plt.plot(timestamps, desired_pos)
-    plt.grid()
-    plt.minorticks_on()
-    plt.grid(which='minor', linewidth='0.1', color='black')
-    plt.xlabel("Время, с")
-    plt.ylabel("$x^*$, мм")
-
-    plt.subplot(2, 2, 3)
-    plt.plot(timestamps, error, color="red")
+    plt.plot(timestamps, error[offset:], color="red")
     plt.grid()
     plt.minorticks_on()
     plt.grid(which='minor', linewidth='0.1', color='black')
     plt.xlabel("Время, с")
     plt.ylabel("$e(t)$, мм")
 
-    plt.subplot(2, 2, 4)
-    plt.plot(timestamps, speed_rpm, color="orange")
+    plt.subplot(2, 2, 2)
+    # speed_rpm = scipy.signal.medfilt(speed_rpm, kernel_size=51)
+    plt.plot(timestamps, speed_rpm[offset:], color="orange")
     plt.grid()
     plt.minorticks_on()
     plt.grid(which='minor', linewidth='0.1', color='black')
     plt.xlabel("Время, с")
     plt.ylabel("$\omega$, об / мин")
 
-    plt.suptitle("P = 0.8, D = 0.6")
+    plt.suptitle("P = 0.4")
+    # plt.suptitle("P = 1.4, D = 0.2")
 
     plt.show()
 
